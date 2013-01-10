@@ -116,8 +116,8 @@ char *MakeHttpSendMsgContent(char *msg, const int msgSize)
 
 	leftSize = msgSize - strlen(msg);
 	if(leftSize>0)
-		//strncat(msg, "http://product.dangdang.com/product.aspx?product_id=1039656721", leftSize);
-		strncat(msg, g_url, leftSize);
+		strncat(msg, "http://product.dangdang.com/product.aspx?product_id=1039656721", leftSize);
+		//strncat(msg, g_url, leftSize);
 
 	leftSize = msgSize - strlen(msg);
 	if(leftSize>0)		
