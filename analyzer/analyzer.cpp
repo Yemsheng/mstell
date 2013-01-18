@@ -5,15 +5,22 @@
 
 
 void buildUrlFile(FILE** fread_h, const char *freadName);
-
+bool hasDomain(char *url, char *domain);
+char *g_client;
+/*
+ *argv[1] .html file
+ *argv[2] .client for example "dangdang"
+ * analyzer www.xxxx.html dangdang
+ */
 int main(int argc, char **argv)
 {
-		if(argc!=2)
+		if(argc!=3)
 		{
-				perror("argc!=2 exit(1)\n");
+				perror("argc!=3 exit(1)\n");
 				exit(1);
 		}
 		char *fileName = argv[1];
+		g_client = argv[2];
 
 		FILE *file_h = fopen(fileName, "r");
 		if(file_h==NULL)
@@ -78,6 +85,10 @@ void buildUrlFile(FILE** fread_h, const char *freadName)
 						if(len<sizeof(urlBuf)){
 							strncpy(urlBuf, httpFindIndex, len);
 							urlBuf[len] = '\0';
+
+							if(!hasDomain(urlBuf, g_client))
+									continue;
+
 							printf("find an url: %s\n", urlBuf);
 							fwrite(urlBuf, strlen(urlBuf), 1, fWriteUrl_h);
 							fwrite("\n", 1, 1, fWriteUrl_h);
@@ -90,3 +101,26 @@ void buildUrlFile(FILE** fread_h, const char *freadName)
 	fclose(fWriteUrl_h);
 	delete fwriteUrlName;
 }
+
+
+bool hasDomain(char *url, char *domain)
+{
+		if(url==NULL||domain==NULL)
+				return false;
+
+		char *findDomain = NULL;
+		findDomain = strstr(url, domain);
+		if(findDomain!=NULL)
+				return true;
+		else
+				return false;
+}
+
+
+
+
+
+
+
+
+
