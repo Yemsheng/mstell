@@ -1,3 +1,9 @@
+/*
+* 抓一个网页---->分析---->算MD5---->去重---->加到队列
+*
+*/
+
+
 #include <stdio.h> 
 #include <stdlib.h> 
 #include <errno.h> 
@@ -6,68 +12,72 @@
 #include <netinet/in.h> 
 #include <sys/socket.h>
 #include <arpa/inet.h>
-#include <string.h>
 #include <unistd.h>
 #include <time.h>
-#include<sys/time.h>
+#include <sys/time.h>
+#include <string.h>
 
+#include <queue>
+#include <string>
+using namespace std;
 
 const int URL_SIZE = 512;
 const int DOMAIN_SIZE = 128;
 const int FILE_NAME_SIZE = 512;
 const int BUFFERSIZE = 1024;
 const int HTTP_MSG_BUFFER_SIZE = 1024;
+const int ReadWriteBufSize = 2048;
 
 
-char *MakeHttpSendMsgContent(char *msg, const int msgSize, char *domain, char *url);
-char *getDomainFromUrl(char *url, char *domainBuf, int domainBufSize);
-void spiderOnePage(char *domain, char *url);
+char *MakeHttpSendMsgContent(char *msg, const int msgSize, const char *domain, const char *url);
+char *getDomainFromUrl(const char *url, char *domainBuf, int domainBufSize);
+bool spiderOnePage(const char *domain, const char *url, const char* saveFileName);
+bool analyzeOnePage(const char *fileName, queue<string> *q_url, bool spiderFlag);
+char *getSaveFileName(char *fileNameBuf, const int NameBufSize);
 
-/*
-* spider2 xxxxx.txt
-*/
-int main(int argc, char **argv) 
-{ 
-        char *fileName = argv[1];
-        FILE *f_handle = fopen(fileName, "r");
-	if(f_handle==NULL)
-	{
-		fprintf(stderr, "open file %s fail, exit\n", fileName);
-		exit(1);
-	}
 
-	fprintf(stdout, "open file %s success\n", fileName);
+int main(int agrc, char **argv)
+{
 
-        char urlBuffer[URL_SIZE];
-	memset(urlBuffer, 0, sizeof(urlBuffer));
+	queue<string> q_url;
+	string firstPage = "http://www.dangdang.com";
+	q_url.push(firstPage);
+	
+	string url;
 	char domainBuffer[DOMAIN_SIZE];
+	char saveFileName[FILE_NAME_SIZE];
 	memset(domainBuffer, 0, sizeof(domainBuffer));
-
-	while(fgets(urlBuffer, sizeof(urlBuffer), f_handle))
+	while(!q_url.empty())
 	{
-		fprintf(stdout, "fgets(urlBuffer, sizeof(urlBuffer), f_handle) success\n  urlBuffer = %s", urlBuffer);
-		int lenGet = strlen(urlBuffer);
-		fprintf(stdout, "lenGet = %d\n", lenGet);
-		if(urlBuffer[lenGet-1]=='\n')
+		url = q_url.front();
+		const char *p_url = url.c_str();
+		fprintf(stdout, "url = %s\n", p_url);
+
+		char *getResult = getDomainFromUrl(p_url, domainBuffer, sizeof(domainBuffer));
+		if(getResult!=NULL)
 		{
-			urlBuffer[lenGet-1]='\0';
-			char *getResult = getDomainFromUrl(urlBuffer, domainBuffer, sizeof(domainBuffer));
-			if(getResult!=NULL)
+			memset(saveFileName, 0, sizeof(saveFileName));
+			getResult = getSaveFileName(saveFileName, sizeof(saveFileName));
+			if(getResult==NULL)
 			{
-				spiderOnePage(domainBuffer, urlBuffer);
+				fprintf(stderr, "spiderOnePage func:getResult = getSaveFileName(saveFileName, sizeof(saveFileName)) fail, return");
+				q_url.pop();
+				continue;
 			}
+
+			bool spiderFlag = spiderOnePage(domainBuffer, p_url, saveFileName);
+			bool analyzeFlag = analyzeOnePage(saveFileName, &q_url, spiderFlag);
 		}
-		//如果url太长，丢弃
-
-		memset(urlBuffer, 0, sizeof(urlBuffer));
 		memset(domainBuffer, 0, sizeof(domainBuffer));
+		q_url.pop();
 	}
-	fclose(f_handle);
-        
-	return 0; 
-} 
 
-char *MakeHttpSendMsgContent(char *msg, const int msgSize, char *domain, char *url)
+	return 0;	
+	
+}
+
+
+char *MakeHttpSendMsgContent(char *msg, const int msgSize, const char *domain, const char *url)
 {
 	fprintf(stdout, "MakeHttpSendMsgContent function\n");
 
@@ -83,7 +93,6 @@ char *MakeHttpSendMsgContent(char *msg, const int msgSize, char *domain, char *u
 
 	leftSize = msgSize - strlen(msg);
 	if(leftSize>0)
-		//strncat(msg, "http://product.dangdang.com/product.aspx?product_id=1039656721", leftSize);
 		strncat(msg, url, leftSize);
 
 	leftSize = msgSize - strlen(msg);
@@ -146,23 +155,14 @@ char *getSaveFileName(char *fileNameBuf, const int NameBufSize)
 }
 
 
-void spiderOnePage(char *domain, char *url)
+bool spiderOnePage(const char *domain, const char *url, const char* saveFileName)
 {
 	fprintf(stdout, "spiderOnePage function\n");
 
-	if(domain==NULL||url==NULL)
-		return;
-
-
-	char *getResult = NULL;
-
-	char saveFileName[FILE_NAME_SIZE];
-	memset(saveFileName, 0, sizeof(saveFileName));
-	getResult = getSaveFileName(saveFileName, sizeof(saveFileName));
-	if(getResult==NULL)
+	if(domain==NULL||url==NULL||saveFileName==NULL)
 	{
-		fprintf(stderr, "spiderOnePage func:getResult = getSaveFileName(saveFileName, sizeof(saveFileName)) fail, return");
-		return;
+		fprintf(stderr, "if(domain==NULL||url==NULL||saveFileName==NULL)  return false\n"); 
+		return false;
 	}
 
 	struct hostent *h; 
@@ -171,8 +171,8 @@ void spiderOnePage(char *domain, char *url)
 	
 	if ((h=gethostbyname(domain)) == NULL) 
 	{
-			herror("gethostbyname"); 
-			return;
+			fprintf(stderr, "gethostbyname error\n"); 
+			return false;
 	} 
 	
 	printf("Host name : %s\n", h->h_name); 
@@ -183,8 +183,8 @@ void spiderOnePage(char *domain, char *url)
 	client_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if(client_fd==-1)
 	{
-			perror("socket failed\n");
-			return;
+			fprintf(stderr, "open socket failed\n");
+			return false;
 	}
 
 	struct sockaddr_in server_addr;
@@ -197,8 +197,9 @@ void spiderOnePage(char *domain, char *url)
 	connectState = connect(client_fd, (struct sockaddr*)&server_addr, sizeof(server_addr));
 	if(connectState==-1)
 	{
-			perror("conncet failed\n");
-			return;
+			fprintf(stderr, "conncet failed\n");
+			close(client_fd);
+			return false;
 	}
 
 	char msg[HTTP_MSG_BUFFER_SIZE];
@@ -208,8 +209,9 @@ void spiderOnePage(char *domain, char *url)
 	sendState = send(client_fd, msg, strlen(msg), 0);
 	if(sendState==-1)
 	{
-			perror("send Error\n");
-			return;
+			fprintf(stderr, "send Error\n");
+			close(client_fd);
+			return false;
 	}
 
 	int receiveLen = 0;
@@ -217,22 +219,26 @@ void spiderOnePage(char *domain, char *url)
 
 	FILE *fout;
 	fout= fopen(saveFileName, "w");
+	int totalReceiveLen = 0;
 	while(true)
 	{
 			
 			receiveLen = recv(client_fd, receiveBuffer,sizeof(receiveBuffer), 0);	
-			printf("receive len = %d\n", receiveLen);
 			if(receiveLen<=0)
 				break;
+			totalReceiveLen += receiveLen;
 			fwrite(receiveBuffer, receiveLen, 1, fout);
 	}
+	fprintf(stdout, "\nurl = %s\ntotal receive len = %d byte(s)\n\n", url, totalReceiveLen);
 	fclose(fout);
 	close(client_fd);
+	
+	return true;
 
 }
 
 
-char *getDomainFromUrl(char *url, char *domainBuf, int domainBufSize)
+char *getDomainFromUrl(const char *url, char *domainBuf, int domainBufSize)
 {
 	fprintf(stdout, "getDomainFromUrl function\n");
 
@@ -244,7 +250,7 @@ char *getDomainFromUrl(char *url, char *domainBuf, int domainBufSize)
 	const int urlLen = strlen(url);
 	const int protocolLen = strlen(httpProtocol);
 	char *domainEnd = "/";
-	char *isFind = strstr(url+protocolLen, domainEnd);
+	char *isFind = strstr((char*)(url+protocolLen), domainEnd);
 	int domainLen = 0;
 	if(isFind==NULL)
 	{
@@ -264,21 +270,96 @@ char *getDomainFromUrl(char *url, char *domainBuf, int domainBufSize)
 	return domainBuf;
 }
 
+void analyzeAndAddQueue(FILE** fread_h, queue<string> *q_url);
+bool analyzeOnePage(const char *fileName, queue<string> *q_url, bool spiderFlag)
+{
+	if(spiderFlag==false)
+	{
+		if(access(fileName, 0))
+			remove(fileName);
+		fprintf(stdout, "in analyzeOnePage func, spiderFlag==false, return");
+	}
+	
+	FILE *file_h = fopen(fileName, "r");
+	if(file_h==NULL)
+	{
+			fprintf(stderr, "fopen for read failed: %s\n", fileName);
+	}
+
+	analyzeAndAddQueue(&file_h, q_url);
+
+	//remove(fileName);
+}
 
 
+bool hasDomain(char *url, char *domain);
+void analyzeAndAddQueue(FILE** fread_h, queue<string> *q_url)
+{
+	if(fread_h==NULL||q_url==NULL)
+	{
+		return;
+	}
+	FILE *file_h = *fread_h;
+	
+		
+	char readBuf[ReadWriteBufSize];
+	char urlBuf[URL_SIZE];
+	char *httpStr = "\"http://";
+	char *httpFindIndex = NULL;
+	char *httpLastIndex = NULL;
+	char *quoteSymbol = "\"";
+	int readLen = 0;
+	while(true){
+		memset(readBuf, 0, sizeof(readBuf));
+		readLen = fread(readBuf, sizeof(readBuf), 1, file_h);
+		if(readLen!=1)
+		{
+				if(feof(file_h))
+						printf("read file end\n");
+				else
+						printf("read file error\n");
+				break;
+		}
+		httpFindIndex = strstr(readBuf, httpStr);
+		if(httpFindIndex!=NULL){
+				httpFindIndex++; //"http:// jump the head char
+				httpLastIndex = strstr(httpFindIndex, quoteSymbol);
+				if(httpLastIndex!=NULL){
+						memset(urlBuf, 0, sizeof(urlBuf));
+						size_t len = httpLastIndex - httpFindIndex;
+						if(len<sizeof(urlBuf)){
+							strncpy(urlBuf, httpFindIndex, len);
+							urlBuf[len] = '\0';
+
+							if(!hasDomain(urlBuf, "dangdang"))
+									continue;
+
+							printf("find an url: %s\n", urlBuf);
+							//add to the queue
+							q_url->push(urlBuf);
+						}
+				}
+
+		}
+	}
+
+}
 
 
+/**
+*检查url中是否有客户(举例：dangdang)
+*/
+bool hasDomain(char *url, char *client)
+{
+		if(url==NULL||client==NULL)
+			return false;
 
-
-
-
-
-
-
-
-
-
-
-
+		char *findclient = NULL;
+		findclient = strstr(url, client);
+		if(findclient!=NULL)
+			return true;
+		else
+			return false;
+}
 
 
