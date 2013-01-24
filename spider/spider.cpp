@@ -19,7 +19,10 @@
 
 #include <queue>
 #include <string>
+#include <set>
 using namespace std;
+
+#include "md5.h"
 
 const int URL_SIZE = 512;
 const int DOMAIN_SIZE = 128;
@@ -34,6 +37,9 @@ char *getDomainFromUrl(const char *url, char *domainBuf, int domainBufSize);
 bool spiderOnePage(const char *domain, const char *url, const char* saveFileName);
 bool analyzeOnePage(const char *fileName, queue<string> *q_url, bool spiderFlag);
 char *getSaveFileName(char *fileNameBuf, const int NameBufSize);
+bool isUrlMd5Exist(const char *urlMd5);
+
+set<string> g_urlMd5Set;
 
 
 int main(int agrc, char **argv)
@@ -42,6 +48,8 @@ int main(int agrc, char **argv)
 	queue<string> q_url;
 	string firstPage = "http://www.dangdang.com";
 	q_url.push(firstPage);
+	char *firstPageMd5str = MD5String((char*)firstPage.c_str());
+	g_urlMd5Set.insert(string(firstPageMd5str));
 	
 	string url;
 	char domainBuffer[DOMAIN_SIZE];
@@ -243,12 +251,20 @@ char *getDomainFromUrl(const char *url, char *domainBuf, int domainBufSize)
 	fprintf(stdout, "getDomainFromUrl function\n");
 
 	if(url==NULL||domainBuf==NULL)
+	{
+			fprintf(stderr, "getDomainFromUrl url==NULL||domainBuf==NULL return NULL\n");
 			return NULL;
-
+	}
 
 	char *httpProtocol = "http://";
 	const int urlLen = strlen(url);
 	const int protocolLen = strlen(httpProtocol);
+	if(urlLen<=protocolLen)
+	{
+		fprintf(stderr, "getDomainFromUrl urlLen<=protocolLen return NULL\n");
+		fprintf(stderr, "getDomainFromUrl url = %s\n", url);
+		return NULL;
+	}
 	char *domainEnd = "/";
 	char *isFind = strstr((char*)(url+protocolLen), domainEnd);
 	int domainLen = 0;
@@ -262,11 +278,15 @@ char *getDomainFromUrl(const char *url, char *domainBuf, int domainBufSize)
 	}
 
 	if(domainLen>=domainBufSize)
-			return NULL;
+	{
+		fprintf(stderr, "getDomainFromUrl domainLen>=domainBufSize return NULL\n");
+		return NULL;
+	}
 
 	strncpy(domainBuf, url+protocolLen, domainLen);
 	domainBuf[domainLen] = '\0';
-
+	
+	fprintf(stdout, "getDomainFromUrl domainBuf = %s\n", domainBuf);
 	return domainBuf;
 }
 
@@ -331,18 +351,44 @@ void analyzeAndAddQueue(FILE** fread_h, queue<string> *q_url)
 							strncpy(urlBuf, httpFindIndex, len);
 							urlBuf[len] = '\0';
 
-							if(!hasDomain(urlBuf, "dangdang"))
+							char domainBuf[DOMAIN_SIZE];
+							memset(domainBuf, 0, sizeof(domainBuf));
+							char *getDomainResult = getDomainFromUrl(urlBuf, domainBuf, sizeof(domainBuf));
+							if(getDomainResult==NULL)
+								continue;
+
+							if(!hasDomain(domainBuf, "dangdang"))
 									continue;
 
-							printf("find an url: %s\n", urlBuf);
+							printf("\nfind an url: %s\n", urlBuf);
+							char *urlMd5str = MD5String(urlBuf);
+							printf("find an md5: %s\n", urlMd5str);
+
 							//add to the queue
-							q_url->push(urlBuf);
+							if(!isUrlMd5Exist(urlMd5str))
+							{
+								g_urlMd5Set.insert(string(urlMd5str));
+								q_url->push(urlBuf);
+								printf("push an url in queue: %s\n\n", urlBuf);
+							}
 						}
 				}
 
 		}
 	}
 
+}
+
+
+/**
+*判断一个url是否已经存在
+*/
+bool isUrlMd5Exist(const char *urlMd5)
+{
+	string urlMd5Str(urlMd5);
+	const bool isUrlIn = g_urlMd5Set.find(urlMd5Str)!=g_urlMd5Set.end();
+	
+	return isUrlIn;
 }
 
 
