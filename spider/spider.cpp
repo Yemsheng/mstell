@@ -40,6 +40,7 @@ char *getSaveFileName(char *fileNameBuf, const int NameBufSize);
 bool isUrlMd5Exist(const char *urlMd5);
 
 set<string> g_urlMd5Set;
+char *g_mainClient;
 
 
 int main(int agrc, char **argv)
@@ -47,6 +48,7 @@ int main(int agrc, char **argv)
 
 	queue<string> q_url;
 	string firstPage = "http://www.dangdang.com";
+	g_mainClient = "dangdang";
 	q_url.push(firstPage);
 	char *firstPageMd5str = MD5String((char*)firstPage.c_str());
 	g_urlMd5Set.insert(string(firstPageMd5str));
@@ -313,68 +315,98 @@ bool analyzeOnePage(const char *fileName, queue<string> *q_url, bool spiderFlag)
 
 
 bool hasDomain(char *url, char *domain);
-void analyzeAndAddQueue(FILE** fread_h, queue<string> *q_url)
+/**
+*有可能在读一次文件时，尾部的url断开了，暂时忽略
+*读取出的url长度大于URL_SIZE-1时，这条url忽略
+*验证通过后，把log去掉，不要影响速度 估计80的时间都用在这个函数了
+*/
+void analyzeBufferAndAddQueue(char *readBuf, const int bufferSize, queue<string> *q_url)
 {
-	if(fread_h==NULL||q_url==NULL)
-	{
-		return;
-	}
-	FILE *file_h = *fread_h;
-	
-		
-	char readBuf[ReadWriteBufSize];
-	char urlBuf[URL_SIZE];
+	//fprintf(stdout, "analyzeBufferAndAddQueue func\n");
 	char *httpStr = "\"http://";
 	char *httpFindIndex = NULL;
 	char *httpLastIndex = NULL;
 	char *quoteSymbol = "\"";
+	char urlBuf[URL_SIZE];
+
+	httpFindIndex = strstr(readBuf, httpStr);
+	if(httpFindIndex!=NULL){
+		httpFindIndex++; //"http:// jump the head char
+		httpLastIndex = strstr(httpFindIndex, quoteSymbol);
+		if(httpLastIndex!=NULL){
+			memset(urlBuf, 0, sizeof(urlBuf));
+			size_t len = httpLastIndex - httpFindIndex;
+			if(len<sizeof(urlBuf)){
+				strncpy(urlBuf, httpFindIndex, len);
+				urlBuf[len] = '\0';
+
+				char domainBuf[DOMAIN_SIZE];
+				memset(domainBuf, 0, sizeof(domainBuf));
+				char *getDomainResult = getDomainFromUrl(urlBuf, domainBuf, sizeof(domainBuf));
+				if(getDomainResult==NULL)
+				{
+					//fprintf(stdout, "analyzeBufferAndAddQueue 解析域名失败 return line=%d\n", __LINE__);
+					return;
+				}
+
+				if(!hasDomain(domainBuf, g_mainClient))
+				{
+					//fprintf(stdout, "analyzeBufferAndAddQueue 域名%s不具有%s return line=%d\n", domainBuf, g_mainClient, __LINE__);
+						return;
+				}
+
+				printf("\nfind an url: %s\n", urlBuf);
+				char *urlMd5str = MD5String(urlBuf);
+				printf("find an md5: %s\n", urlMd5str);
+
+				//add to the queue
+				if(!isUrlMd5Exist(urlMd5str))
+				{
+					g_urlMd5Set.insert(string(urlMd5str));
+					q_url->push(urlBuf);
+					printf("push an url in queue: %s\n\n", urlBuf);
+				}
+			}
+			analyzeBufferAndAddQueue(httpLastIndex+1, bufferSize-(httpLastIndex-readBuf+1), q_url);
+		}
+		else
+		{
+			//fprintf(stdout, "httpLastIndex==NULL 找到了头部\"http://，找不到尾部\n");
+		}
+	}
+	else
+	{
+		//fprintf(stdout, "httpFindIndex==NULL 找不到头部\"http://\n");
+	}
+}
+
+
+void analyzeAndAddQueue(FILE** fread_h, queue<string> *q_url)
+{
+	fprintf(stdout, "analyzeAndAddQueue func\n");
+
+	if(fread_h==NULL||q_url==NULL)
+	{
+		fprintf(stderr, "analyzeAndAddQueue func fread_h==NULL||q_url==NULL return\n");
+		return;
+	}
+
+	FILE *file_h = *fread_h;
+	char readBuf[ReadWriteBufSize];
 	int readLen = 0;
 	while(true){
 		memset(readBuf, 0, sizeof(readBuf));
-		readLen = fread(readBuf, sizeof(readBuf), 1, file_h);
-		if(readLen!=1)
+		readLen = fread(readBuf, 1, sizeof(readBuf), file_h);
+		//fprintf(stdout, "analyzeAndAddQueue func fread len = %d\n", readLen);
+		if(readLen!=sizeof(readBuf))
 		{
-				if(feof(file_h))
-						printf("read file end\n");
-				else
-						printf("read file error\n");
-				break;
+			if(feof(file_h))
+					printf("read file end\n");
+			else
+					printf("read file error\n");
+			break;
 		}
-		httpFindIndex = strstr(readBuf, httpStr);
-		if(httpFindIndex!=NULL){
-				httpFindIndex++; //"http:// jump the head char
-				httpLastIndex = strstr(httpFindIndex, quoteSymbol);
-				if(httpLastIndex!=NULL){
-						memset(urlBuf, 0, sizeof(urlBuf));
-						size_t len = httpLastIndex - httpFindIndex;
-						if(len<sizeof(urlBuf)){
-							strncpy(urlBuf, httpFindIndex, len);
-							urlBuf[len] = '\0';
-
-							char domainBuf[DOMAIN_SIZE];
-							memset(domainBuf, 0, sizeof(domainBuf));
-							char *getDomainResult = getDomainFromUrl(urlBuf, domainBuf, sizeof(domainBuf));
-							if(getDomainResult==NULL)
-								continue;
-
-							if(!hasDomain(domainBuf, "dangdang"))
-									continue;
-
-							printf("\nfind an url: %s\n", urlBuf);
-							char *urlMd5str = MD5String(urlBuf);
-							printf("find an md5: %s\n", urlMd5str);
-
-							//add to the queue
-							if(!isUrlMd5Exist(urlMd5str))
-							{
-								g_urlMd5Set.insert(string(urlMd5str));
-								q_url->push(urlBuf);
-								printf("push an url in queue: %s\n\n", urlBuf);
-							}
-						}
-				}
-
-		}
+		analyzeBufferAndAddQueue(readBuf, readLen, q_url);
 	}
 
 }
