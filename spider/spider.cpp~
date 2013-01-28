@@ -16,7 +16,6 @@
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
-#include <pthread.h>
 
 #include <queue>
 #include <string>
@@ -39,145 +38,52 @@ bool spiderOnePage(const char *domain, const char *url, const char* saveFileName
 bool analyzeOnePage(const char *fileName, queue<string> *q_url, bool spiderFlag);
 char *getSaveFileName(char *fileNameBuf, const int NameBufSize);
 bool isUrlMd5Exist(const char *urlMd5);
-void *thread_function(void *arg);
 
 set<string> g_urlMd5Set;
 char *g_mainClient;
-queue<string> *g_queue_url;
-
-pthread_mutex_t url_queue_mutex;
-pthread_mutex_t thread_num_mutex;
-const int threadNumMax = 5;
-int nowThreadNum = 0;
-
-
-
 
 
 int main(int agrc, char **argv)
 {
 
 	queue<string> q_url;
-	g_queue_url = &q_url;
 	string firstPage = "http://www.dangdang.com";
 	g_mainClient = "dangdang";
 	q_url.push(firstPage);
 	char *firstPageMd5str = MD5String((char*)firstPage.c_str());
 	g_urlMd5Set.insert(string(firstPageMd5str));
 	
-	//创建锁
-	int mutex_res = pthread_mutex_init(&url_queue_mutex, NULL);
-	if(mutex_res!=0)
-	{
-		fprintf(stderr, "url_queue_mutex mutex initalization failed\n");
-		exit(1);
-	}
-	mutex_res = pthread_mutex_init(&thread_num_mutex, NULL);
-	if(mutex_res!=0)
-	{
-		fprintf(stderr, "thread_num_mutex mutex initalization failed\n");
-		exit(1);
-	}
-	//创建线程属性 detached
-	pthread_attr_t thread_attr;
-	int attr_res = pthread_attr_init(&thread_attr);
-	if(attr_res!=0)
-	{
-		fprintf(stderr, "thread attr initalization failed\n");
-		exit(1);
-	}
-	attr_res = pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
-	if(attr_res!=0)
-	{
-		fprintf(stderr, "thread attr setdetachstate PTHREAD_CREATE_DETACHED failed\n");
-		exit(1);
-	}
-
 	string url;
-	while(true)
-	{
-		pthread_mutex_lock(&thread_num_mutex);
-		int tmpNum = nowThreadNum;
-		pthread_mutex_unlock(&thread_num_mutex);
-		if(tmpNum>=threadNumMax)
-		{
-			fprintf(stdout, "more than %d thread sleep and continue\n", tmpNum);
-			sleep(1);
-			continue;
-		}
-
-		if(q_url.empty())
-		{
-			fprintf(stdout, "queue url is empty sleep and continue\n");
-			sleep(1);
-			continue;
-		}
-
-		url = q_url.front();
-		const char *p_url = url.c_str();
-		q_url.pop();
-
-		pthread_t a_thread;
-		void *thread_result;
-	
-		pthread_mutex_lock(&thread_num_mutex);
-		nowThreadNum++;
-		fprintf(stdout, "nowThreadNum = %d\n", nowThreadNum);
-		pthread_mutex_unlock(&thread_num_mutex);
-
-		int res = pthread_create(&a_thread, &thread_attr, thread_function, (void *)p_url);
-		if(res!=0)
-		{
-			fprintf(stderr, "Thread creation failed\n");
-			continue;
-		}
-		
-		
-		
-	}
-	pthread_attr_destroy(&thread_attr);
-	pthread_mutex_destroy(&thread_num_mutex);
-	pthread_mutex_destroy(&url_queue_mutex);
-
-	return 0;	
-	
-}
-
-void *thread_function(void *arg)
-{
-	fprintf(stdout, "thread_function func\n");
-
-
-	const char *p_url = (char *)arg;
 	char domainBuffer[DOMAIN_SIZE];
 	char saveFileName[FILE_NAME_SIZE];
 	memset(domainBuffer, 0, sizeof(domainBuffer));
-
-	fprintf(stdout, "url = %s\n", p_url);
-
-	char *getResult = getDomainFromUrl(p_url, domainBuffer, sizeof(domainBuffer));
-	if(getResult!=NULL)
+	while(!q_url.empty())
 	{
-		memset(saveFileName, 0, sizeof(saveFileName));
-		getResult = getSaveFileName(saveFileName, sizeof(saveFileName));
-		if(getResult==NULL)
-		{
-			fprintf(stderr, "spiderOnePage func:getResult = getSaveFileName(saveFileName, sizeof(saveFileName)) fail, return\n");
-			pthread_exit((void*)"getSaveFile name error");
-		}
+		url = q_url.front();
+		const char *p_url = url.c_str();
+		fprintf(stdout, "url = %s\n", p_url);
 
-		bool spiderFlag = spiderOnePage(domainBuffer, p_url, saveFileName);
-		bool analyzeFlag = analyzeOnePage(saveFileName, g_queue_url, spiderFlag);
+		char *getResult = getDomainFromUrl(p_url, domainBuffer, sizeof(domainBuffer));
+		if(getResult!=NULL)
+		{
+			memset(saveFileName, 0, sizeof(saveFileName));
+			getResult = getSaveFileName(saveFileName, sizeof(saveFileName));
+			if(getResult==NULL)
+			{
+				fprintf(stderr, "spiderOnePage func:getResult = getSaveFileName(saveFileName, sizeof(saveFileName)) fail, return");
+				q_url.pop();
+				continue;
+			}
+
+			bool spiderFlag = spiderOnePage(domainBuffer, p_url, saveFileName);
+			bool analyzeFlag = analyzeOnePage(saveFileName, &q_url, spiderFlag);
+		}
+		memset(domainBuffer, 0, sizeof(domainBuffer));
+		q_url.pop();
 	}
 
-	fprintf(stdout, "thread_function exit\n");
+	return 0;	
 	
-	pthread_mutex_lock(&thread_num_mutex);
-	nowThreadNum--;
-	fprintf(stdout, "nowThreadNum = %d\n", nowThreadNum);
-	pthread_mutex_unlock(&thread_num_mutex);
-
-	pthread_exit(NULL);
 }
 
 
@@ -400,12 +306,9 @@ bool analyzeOnePage(const char *fileName, queue<string> *q_url, bool spiderFlag)
 	if(file_h==NULL)
 	{
 			fprintf(stderr, "fopen for read failed: %s\n", fileName);
-			return false;
 	}
 
 	analyzeAndAddQueue(&file_h, q_url);
-
-	fclose(file_h);
 
 	//remove(fileName);
 }
@@ -423,7 +326,6 @@ void analyzeBufferAndAddQueue(char *readBuf, const int bufferSize, queue<string>
 
 	if(readBuf==NULL||bufferSize<0||q_url==NULL)
 		fprintf(stderr, "analyzeBufferAndAddQueue, readBuf==NULL||bufferSize<0||q_url==NULL return");
-
 	char *httpStr = "\"http://";
 	char *httpFindIndex = NULL;
 	char *httpLastIndex = NULL;
@@ -463,10 +365,8 @@ void analyzeBufferAndAddQueue(char *readBuf, const int bufferSize, queue<string>
 				//add to the queue
 				if(!isUrlMd5Exist(urlMd5str))
 				{
-					pthread_mutex_lock(&url_queue_mutex);
 					g_urlMd5Set.insert(string(urlMd5str));
 					q_url->push(urlBuf);
-					pthread_mutex_unlock(&url_queue_mutex);
 					printf("push an url in queue: %s\n\n", urlBuf);
 				}
 			}
@@ -521,9 +421,7 @@ void analyzeAndAddQueue(FILE** fread_h, queue<string> *q_url)
 bool isUrlMd5Exist(const char *urlMd5)
 {
 	string urlMd5Str(urlMd5);
-	pthread_mutex_lock(&url_queue_mutex);
 	const bool isUrlIn = g_urlMd5Set.find(urlMd5Str)!=g_urlMd5Set.end();
-	pthread_mutex_unlock(&url_queue_mutex);
 	
 	return isUrlIn;
 }
